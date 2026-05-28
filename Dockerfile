@@ -35,7 +35,8 @@ RUN set -eux; \
   find ./extensions -name 'package.json' -type f | while read -r f; do \
     sed -i -E 's/"openclaw"[[:space:]]*:[[:space:]]*">=[^"]+"/"openclaw": "*"/g' "$f"; \
     sed -i -E 's/"openclaw"[[:space:]]*:[[:space:]]*"workspace:[^"]+"/"openclaw": "*"/g' "$f"; \
-  done
+  done; \
+  sed -i -E 's/^minimumReleaseAge:.*/minimumReleaseAge: 0/' ./pnpm-workspace.yaml
 
 RUN pnpm --version \
   && pnpm install --no-frozen-lockfile
