@@ -38,6 +38,11 @@ Optional:
 Notes:
 - This template pins OpenClaw to a released version by default via Docker build arg `OPENCLAW_GIT_REF` (override if you want `main`).
 
+YOAKARI Slack routine buttons:
+- This fork patches OpenClaw's Slack interaction handler so `yoakari_routine_plan`, `yoakari_routine_create`, and `yoakari_routine_revision` are sent directly to GitHub `repository_dispatch` instead of the generic agent heartbeat.
+- Set `YOAKARI_GITHUB_TOKEN` on the Railway service. The token needs permission to dispatch workflows for `shunsuke-chocolate/yoakari-content`.
+- Optional overrides: `YOAKARI_GITHUB_REPO_OWNER`, `YOAKARI_GITHUB_REPO_NAME`, `YOAKARI_GITHUB_BRANCH`, `YOAKARI_ROUTINE_DISPATCH_EVENT`.
+
 4) Enable **Public Networking** (HTTP). Railway will assign a domain.
    - This service listens on Railway’s injected `PORT` at runtime (recommended).
 5) Deploy.

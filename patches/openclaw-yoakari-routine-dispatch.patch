@@ -1,0 +1,189 @@
+diff --git a/extensions/slack/src/monitor/events/interactions.block-actions.ts b/extensions/slack/src/monitor/events/interactions.block-actions.ts
+index db1cbc56..78c69f81 100644
+--- a/extensions/slack/src/monitor/events/interactions.block-actions.ts
++++ b/extensions/slack/src/monitor/events/interactions.block-actions.ts
+@@ -95,6 +95,8 @@ type SlackBlockActionBody = {
+ 
+ type SlackBlockActionRespond = NonNullable<SlackActionMiddlewareArgs["respond"]>;
+ 
++type YoakariRoutineAction = "plan" | "create" | "revision";
++
+ type ParsedSlackBlockAction = {
+   typedBody: SlackBlockActionBody;
+   typedAction: Record<string, unknown>;
+@@ -188,6 +190,160 @@ function readInteractionAction(raw: unknown) {
+   return raw as Record<string, unknown>;
+ }
+ 
++function parseYoakariRoutineActionId(actionId: string): YoakariRoutineAction | undefined {
++  if (actionId === "yoakari_routine_plan") {
++    return "plan";
++  }
++  if (actionId === "yoakari_routine_create") {
++    return "create";
++  }
++  if (actionId === "yoakari_routine_revision") {
++    return "revision";
++  }
++  return undefined;
++}
++
++function parseYoakariRoutineActionValue(params: {
++  parsed: ParsedSlackBlockAction;
++  fallbackAction: YoakariRoutineAction;
++}): {
++  action: YoakariRoutineAction;
++  branch?: string;
++  sha?: string;
++  mode?: string;
++  note?: string;
++} {
++  const rawValue = normalizeOptionalString(params.parsed.actionSummary.value);
++  let parsedValue: Record<string, unknown> = {};
++  if (rawValue) {
++    try {
++      parsedValue = JSON.parse(rawValue) as Record<string, unknown>;
++    } catch {
++      const [action, sha, branch, mode] = rawValue.split("|");
++      parsedValue = { action, sha, branch, mode };
++    }
++  }
++
++  const action = normalizeOptionalString(parsedValue.action) ?? params.fallbackAction;
++  if (!["plan", "create", "revision"].includes(action)) {
++    throw new Error(`Invalid YOAKARI routine action: ${action}`);
++  }
++
++  return {
++    action: action as YoakariRoutineAction,
++    branch: normalizeOptionalString(parsedValue.branch) ?? undefined,
++    sha: normalizeOptionalString(parsedValue.sha) ?? undefined,
++    mode: normalizeOptionalString(parsedValue.mode) ?? undefined,
++    note: normalizeOptionalString(parsedValue.note) ?? undefined,
++  };
++}
++
++function yoakariRoutineResponseText(action: YoakariRoutineAction): string {
++  if (action === "plan") {
++    return "計画調整Issueの作成を受け付けました。具体的な指示はこのSlackスレッドの返信として扱います。";
++  }
++  if (action === "create") {
++    return "次のdraft作成Issueの作成を受け付けました。slotやepisode指定があればこのSlackスレッドの返信として扱います。";
++  }
++  return "修正Issueの作成を受け付けました。episode_idや修正内容はこのSlackスレッドの返信として扱います。";
++}
++
++function resolveYoakariGithubToken(): string | undefined {
++  return (
++    process.env.YOAKARI_GITHUB_TOKEN?.trim() ||
++    process.env.YOAKARI_ROUTINE_DISPATCH_TOKEN?.trim() ||
++    process.env.APPROVAL_DISPATCH_TOKEN?.trim() ||
++    process.env.GITHUB_TOKEN?.trim() ||
++    undefined
++  );
++}
++
++async function dispatchYoakariRoutineFeedback(params: {
++  parsed: ParsedSlackBlockAction;
++  value: ReturnType<typeof parseYoakariRoutineActionValue>;
++}): Promise<void> {
++  const token = resolveYoakariGithubToken();
++  if (!token) {
++    throw new Error(
++      "YOAKARI_GITHUB_TOKEN, YOAKARI_ROUTINE_DISPATCH_TOKEN, APPROVAL_DISPATCH_TOKEN, or GITHUB_TOKEN is required.",
++    );
++  }
++
++  const owner = process.env.YOAKARI_GITHUB_REPO_OWNER?.trim() || "shunsuke-chocolate";
++  const repo = process.env.YOAKARI_GITHUB_REPO_NAME?.trim() || "yoakari-content";
++  const eventType = process.env.YOAKARI_ROUTINE_DISPATCH_EVENT?.trim() || "yoakari-routine-feedback";
++  const branch = params.value.branch || process.env.YOAKARI_GITHUB_BRANCH?.trim() || "main";
++
++  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/dispatches`, {
++    method: "POST",
++    headers: {
++      accept: "application/vnd.github+json",
++      authorization: `Bearer ${token}`,
++      "content-type": "application/json",
++      "user-agent": "openclaw-yoakari-routine-dispatch",
++      "x-github-api-version": "2022-11-28",
++    },
++    body: JSON.stringify({
++      event_type: eventType,
++      client_payload: {
++        action: params.value.action,
++        sha: params.value.sha ?? null,
++        reviewer: params.parsed.userId || "unknown",
++        note: params.value.note ?? null,
++        slack_channel: params.parsed.channelId ?? null,
++        slack_message_ts: params.parsed.messageTs ?? null,
++        slack_user_id: params.parsed.userId ?? null,
++        branch,
++        mode: params.value.mode ?? null,
++        source: "openclaw_slack_interaction",
++      },
++    }),
++  });
++
++  if (!response.ok) {
++    const detail = await response.text().catch(() => "");
++    throw new Error(
++      `GitHub repository_dispatch failed: ${response.status} ${response.statusText}${
++        detail ? ` ${detail.slice(0, 240)}` : ""
++      }`,
++    );
++  }
++}
++
++async function handleYoakariRoutineBlockAction(params: {
++  ctx: SlackMonitorContext;
++  parsed: ParsedSlackBlockAction;
++  respond?: SlackBlockActionRespond;
++}): Promise<boolean> {
++  const fallbackAction = parseYoakariRoutineActionId(params.parsed.actionId);
++  if (!fallbackAction) {
++    return false;
++  }
++
++  try {
++    const value = parseYoakariRoutineActionValue({
++      parsed: params.parsed,
++      fallbackAction,
++    });
++    await dispatchYoakariRoutineFeedback({ parsed: params.parsed, value });
++    const message = yoakariRoutineResponseText(value.action);
++    params.ctx.runtime.log?.(
++      `slack:interaction yoakari routine dispatched action=${value.action} user=${params.parsed.userId} channel=${params.parsed.channelId ?? "unknown"}`,
++    );
++    await respondEphemeral(params.respond, `${message} GitHub Actionsへ通知しました。`);
++  } catch (error) {
++    params.ctx.runtime.log?.(
++      `slack:interaction yoakari routine dispatch failed action=${params.parsed.actionId}: ${String(error)}`,
++    );
++    await respondEphemeral(
++      params.respond,
++      `YOAKARI Routineボタンの処理に失敗しました: ${String(error)}`,
++    );
++  }
++
++  return true;
++}
++
+ export function summarizeAction(action: Record<string, unknown>): SlackActionSummary {
+   const typed = action as {
+     type?: string;
+@@ -927,6 +1083,14 @@ async function handleSlackBlockAction(params: {
+   if (!auth.allowed) {
+     return;
+   }
++  const handledYoakariRoutine = await handleYoakariRoutineBlockAction({
++    ctx: params.ctx,
++    parsed,
++    respond,
++  });
++  if (handledYoakariRoutine) {
++    return;
++  }
+   if (pluginInteractionData && isSlackReplyActionId(parsed.actionId)) {
+     const handledBindingApproval = await handleSlackPluginBindingApproval({
+       ctx: params.ctx,
