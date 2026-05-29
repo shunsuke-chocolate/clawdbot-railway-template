@@ -1,17 +1,25 @@
 diff --git a/extensions/slack/src/monitor/events/interactions.block-actions.ts b/extensions/slack/src/monitor/events/interactions.block-actions.ts
-index db1cbc56..78c69f81 100644
+index db1cbc56..e804b217 100644
 --- a/extensions/slack/src/monitor/events/interactions.block-actions.ts
 +++ b/extensions/slack/src/monitor/events/interactions.block-actions.ts
-@@ -95,6 +95,8 @@ type SlackBlockActionBody = {
+@@ -95,6 +95,16 @@ type SlackBlockActionBody = {
  
  type SlackBlockActionRespond = NonNullable<SlackActionMiddlewareArgs["respond"]>;
  
 +type YoakariRoutineAction = "plan" | "create" | "revision";
++type YoakariReviewAction =
++  | "approve"
++  | "changes"
++  | "image_changes"
++  | "image_skip"
++  | "approve_image"
++  | "replace"
++  | "reset";
 +
  type ParsedSlackBlockAction = {
    typedBody: SlackBlockActionBody;
    typedAction: Record<string, unknown>;
-@@ -188,6 +190,160 @@ function readInteractionAction(raw: unknown) {
+@@ -188,6 +198,348 @@ function readInteractionAction(raw: unknown) {
    return raw as Record<string, unknown>;
  }
  
@@ -24,6 +32,31 @@ index db1cbc56..78c69f81 100644
 +  }
 +  if (actionId === "yoakari_routine_revision") {
 +    return "revision";
++  }
++  return undefined;
++}
++
++function parseYoakariReviewActionId(actionId: string): YoakariReviewAction | undefined {
++  if (actionId === "yoakari_review_approve") {
++    return "approve";
++  }
++  if (actionId === "yoakari_review_changes") {
++    return "changes";
++  }
++  if (actionId === "yoakari_review_image_changes") {
++    return "image_changes";
++  }
++  if (actionId === "yoakari_review_image_skip") {
++    return "image_skip";
++  }
++  if (actionId === "yoakari_review_approve_image") {
++    return "approve_image";
++  }
++  if (actionId === "yoakari_review_replace") {
++    return "replace";
++  }
++  if (actionId === "yoakari_review_reset") {
++    return "reset";
 +  }
 +  return undefined;
 +}
@@ -63,6 +96,59 @@ index db1cbc56..78c69f81 100644
 +  };
 +}
 +
++function parseYoakariReviewActionValue(params: {
++  parsed: ParsedSlackBlockAction;
++  fallbackAction: YoakariReviewAction;
++}): {
++  action: YoakariReviewAction;
++  episodeId: string;
++  branch?: string;
++  sha?: string;
++  note?: string;
++} {
++  const rawValue = normalizeOptionalString(params.parsed.actionSummary.value);
++  let parsedValue: Record<string, unknown> = {};
++  if (rawValue) {
++    try {
++      parsedValue = JSON.parse(rawValue) as Record<string, unknown>;
++    } catch {
++      const [action, episodeId, sha, branch] = rawValue.split("|");
++      parsedValue = { action, episode_id: episodeId, sha, branch };
++    }
++  }
++
++  const action = normalizeOptionalString(parsedValue.action) ?? params.fallbackAction;
++  if (
++    ![
++      "approve",
++      "changes",
++      "image_changes",
++      "image_skip",
++      "approve_image",
++      "replace",
++      "reset",
++    ].includes(action)
++  ) {
++    throw new Error(`Invalid YOAKARI review action: ${action}`);
++  }
++
++  const episodeId =
++    normalizeOptionalString(parsedValue.episode_id) ??
++    normalizeOptionalString(parsedValue.episodeId) ??
++    "";
++  if (!/^YK-(?:EP|DES)-[0-9]{4}$/.test(episodeId)) {
++    throw new Error(`Invalid YOAKARI episode_id: ${episodeId}`);
++  }
++
++  return {
++    action: action as YoakariReviewAction,
++    episodeId,
++    branch: normalizeOptionalString(parsedValue.branch) ?? undefined,
++    sha: normalizeOptionalString(parsedValue.sha) ?? undefined,
++    note: normalizeOptionalString(parsedValue.note) ?? undefined,
++  };
++}
++
 +function yoakariRoutineResponseText(action: YoakariRoutineAction): string {
 +  if (action === "plan") {
 +    return "計画調整Issueの作成を受け付けました。具体的な指示はこのSlackスレッドの返信として扱います。";
@@ -73,14 +159,90 @@ index db1cbc56..78c69f81 100644
 +  return "修正Issueの作成を受け付けました。episode_idや修正内容はこのSlackスレッドの返信として扱います。";
 +}
 +
++function yoakariReviewResponseText(action: YoakariReviewAction, episodeId: string): string {
++  if (action === "changes") {
++    return `修正依頼として受け付けました。episode_id: ${episodeId} / 具体的な修正内容はこのSlackスレッドに返信してください。`;
++  }
++  if (action === "image_changes") {
++    return `画像差し戻しとして受け付けました。episode_id: ${episodeId} / 画像への指示はこのSlackスレッドに返信してください。`;
++  }
++  if (action === "image_skip") {
++    return `画像なし運用として受け付けました。episode_id: ${episodeId}`;
++  }
++  if (action === "replace") {
++    return `差し替え予定として受け付けました。episode_id: ${episodeId}`;
++  }
++  if (action === "reset") {
++    return `レビュー状態のリセットを受け付けました。episode_id: ${episodeId}`;
++  }
++  if (action === "approve_image") {
++    return `画像承認を受け付けました。episode_id: ${episodeId}`;
++  }
++  return `承認を受け付けました。episode_id: ${episodeId}`;
++}
++
 +function resolveYoakariGithubToken(): string | undefined {
 +  return (
 +    process.env.YOAKARI_GITHUB_TOKEN?.trim() ||
++    process.env.YOAKARI_REVIEW_DISPATCH_TOKEN?.trim() ||
 +    process.env.YOAKARI_ROUTINE_DISPATCH_TOKEN?.trim() ||
 +    process.env.APPROVAL_DISPATCH_TOKEN?.trim() ||
 +    process.env.GITHUB_TOKEN?.trim() ||
 +    undefined
 +  );
++}
++
++async function dispatchYoakariReviewAction(params: {
++  parsed: ParsedSlackBlockAction;
++  value: ReturnType<typeof parseYoakariReviewActionValue>;
++  message: string;
++}): Promise<void> {
++  const token = resolveYoakariGithubToken();
++  if (!token) {
++    throw new Error(
++      "YOAKARI_GITHUB_TOKEN, YOAKARI_REVIEW_DISPATCH_TOKEN, YOAKARI_ROUTINE_DISPATCH_TOKEN, APPROVAL_DISPATCH_TOKEN, or GITHUB_TOKEN is required.",
++    );
++  }
++
++  const owner = process.env.YOAKARI_GITHUB_REPO_OWNER?.trim() || "shunsuke-chocolate";
++  const repo = process.env.YOAKARI_GITHUB_REPO_NAME?.trim() || "yoakari-content";
++  const eventType = process.env.YOAKARI_REVIEW_DISPATCH_EVENT?.trim() || "yoakari-review-action";
++  const branch = params.value.branch || process.env.YOAKARI_GITHUB_BRANCH?.trim() || "main";
++
++  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/dispatches`, {
++    method: "POST",
++    headers: {
++      accept: "application/vnd.github+json",
++      authorization: `Bearer ${token}`,
++      "content-type": "application/json",
++      "user-agent": "openclaw-yoakari-review-dispatch",
++      "x-github-api-version": "2022-11-28",
++    },
++    body: JSON.stringify({
++      event_type: eventType,
++      client_payload: {
++        action: params.value.action,
++        episode_id: params.value.episodeId,
++        sha: params.value.sha ?? null,
++        reviewer: params.parsed.userId || "unknown",
++        note: params.value.note ?? params.message,
++        slack_channel: params.parsed.channelId ?? null,
++        slack_message_ts: params.parsed.messageTs ?? null,
++        slack_user_id: params.parsed.userId ?? null,
++        branch,
++        source: "openclaw_slack_interaction",
++      },
++    }),
++  });
++
++  if (!response.ok) {
++    const detail = await response.text().catch(() => "");
++    throw new Error(
++      `GitHub repository_dispatch failed: ${response.status} ${response.statusText}${
++        detail ? ` ${detail.slice(0, 240)}` : ""
++      }`,
++    );
++  }
 +}
 +
 +async function dispatchYoakariRoutineFeedback(params: {
@@ -169,13 +331,55 @@ index db1cbc56..78c69f81 100644
 +  return true;
 +}
 +
++async function handleYoakariReviewBlockAction(params: {
++  ctx: SlackMonitorContext;
++  parsed: ParsedSlackBlockAction;
++  respond?: SlackBlockActionRespond;
++}): Promise<boolean> {
++  const fallbackAction = parseYoakariReviewActionId(params.parsed.actionId);
++  if (!fallbackAction) {
++    return false;
++  }
++
++  try {
++    const value = parseYoakariReviewActionValue({
++      parsed: params.parsed,
++      fallbackAction,
++    });
++    const message = yoakariReviewResponseText(value.action, value.episodeId);
++    await dispatchYoakariReviewAction({ parsed: params.parsed, value, message });
++    params.ctx.runtime.log?.(
++      `slack:interaction yoakari review dispatched action=${value.action} episode=${value.episodeId} user=${params.parsed.userId} channel=${params.parsed.channelId ?? "unknown"}`,
++    );
++    await respondEphemeral(params.respond, `${message} GitHub Actionsへ通知しました。`);
++  } catch (error) {
++    params.ctx.runtime.log?.(
++      `slack:interaction yoakari review dispatch failed action=${params.parsed.actionId}: ${String(error)}`,
++    );
++    await respondEphemeral(
++      params.respond,
++      `YOAKARIレビュー操作の処理に失敗しました: ${String(error)}`,
++    );
++  }
++
++  return true;
++}
++
  export function summarizeAction(action: Record<string, unknown>): SlackActionSummary {
    const typed = action as {
      type?: string;
-@@ -927,6 +1083,14 @@ async function handleSlackBlockAction(params: {
+@@ -927,6 +1279,22 @@ async function handleSlackBlockAction(params: {
    if (!auth.allowed) {
      return;
    }
++  const handledYoakariReview = await handleYoakariReviewBlockAction({
++    ctx: params.ctx,
++    parsed,
++    respond,
++  });
++  if (handledYoakariReview) {
++    return;
++  }
 +  const handledYoakariRoutine = await handleYoakariRoutineBlockAction({
 +    ctx: params.ctx,
 +    parsed,

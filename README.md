@@ -40,8 +40,9 @@ Notes:
 
 YOAKARI Slack routine buttons:
 - This fork patches OpenClaw's Slack interaction handler so `yoakari_routine_plan`, `yoakari_routine_create`, and `yoakari_routine_revision` are sent directly to GitHub `repository_dispatch` instead of the generic agent heartbeat.
+- It also routes YOAKARI draft review buttons such as `yoakari_review_approve`, `yoakari_review_changes`, and `yoakari_review_image_changes` to `repository_dispatch: yoakari-review-action`.
 - Set `YOAKARI_GITHUB_TOKEN` on the Railway service. The token needs permission to dispatch workflows for `shunsuke-chocolate/yoakari-content`.
-- Optional overrides: `YOAKARI_GITHUB_REPO_OWNER`, `YOAKARI_GITHUB_REPO_NAME`, `YOAKARI_GITHUB_BRANCH`, `YOAKARI_ROUTINE_DISPATCH_EVENT`.
+- Optional overrides: `YOAKARI_GITHUB_REPO_OWNER`, `YOAKARI_GITHUB_REPO_NAME`, `YOAKARI_GITHUB_BRANCH`, `YOAKARI_ROUTINE_DISPATCH_EVENT`, `YOAKARI_REVIEW_DISPATCH_EVENT`.
 
 4) Enable **Public Networking** (HTTP). Railway will assign a domain.
    - This service listens on Railway’s injected `PORT` at runtime (recommended).
