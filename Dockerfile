@@ -84,6 +84,8 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
+COPY scripts ./scripts
+
 # Copy built openclaw
 COPY --from=openclaw-build /openclaw /openclaw
 

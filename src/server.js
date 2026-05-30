@@ -419,6 +419,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
         <option value="openclaw.devices.approve">openclaw devices approve &lt;requestId&gt;</option>
         <option value="openclaw.plugins.list">openclaw plugins list</option>
         <option value="openclaw.plugins.enable">openclaw plugins enable &lt;name&gt;</option>
+        <option value="investment.report.run">investment report run</option>
       </select>
       <input id="consoleArg" placeholder="Optional arg (e.g. 200, gateway.port)" style="flex: 1" />
       <button id="consoleRun" style="background:#0f172a">Run</button>
@@ -949,11 +950,40 @@ function redactSecrets(text) {
   // Very small best-effort redaction. (Config paths/values may still contain secrets.)
   return String(text)
     .replace(/(sk-[A-Za-z0-9_-]{10,})/g, "[REDACTED]")
-    .replace(/(gho_[A-Za-z0-9_]{10,})/g, "[REDACTED]")
+    .replace(/(gh[opsu]_[A-Za-z0-9_]{10,})/g, "[REDACTED]")
     .replace(/(xox[baprs]-[A-Za-z0-9-]{10,})/g, "[REDACTED]")
+    .replace(/(xapp-[A-Za-z0-9-]{10,})/g, "[REDACTED]")
     // Telegram bot tokens look like: 123456:ABCDEF...
     .replace(/(\d{5,}:[A-Za-z0-9_-]{10,})/g, "[REDACTED]")
     .replace(/(AA[A-Za-z0-9_-]{10,}:\S{10,})/g, "[REDACTED]");
+}
+
+function parseInvestmentReportConsoleArg(arg) {
+  const parts = String(arg || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0 || parts[0] === "help" || parts[0] === "--help") {
+    return ["--help"];
+  }
+
+  const createPr = parts.includes("--create-pr");
+  const filtered = parts.filter((part) => part !== "--create-pr");
+  const kind = filtered[0];
+
+  if (kind === "issue" && /^[0-9]+$/.test(filtered[1] || "") && filtered.length === 2) {
+    return ["--issue", filtered[1], ...(createPr ? ["--create-pr"] : [])];
+  }
+  if (kind === "daily" && /^\d{4}-\d{2}-\d{2}$/.test(filtered[1] || "") && filtered.length === 2) {
+    return ["--report-type", "daily", "--date", filtered[1], ...(createPr ? ["--create-pr"] : [])];
+  }
+  if (kind === "weekly" && /^\d{4}-W\d{2}$/.test(filtered[1] || "") && filtered.length === 2) {
+    return ["--report-type", "weekly", "--period", filtered[1], ...(createPr ? ["--create-pr"] : [])];
+  }
+  if (kind === "monthly" && /^\d{4}-\d{2}$/.test(filtered[1] || "") && filtered.length === 2) {
+    return ["--report-type", "monthly", "--period", filtered[1], ...(createPr ? ["--create-pr"] : [])];
+  }
+
+  throw new Error(
+    "Invalid argument. Use: daily YYYY-MM-DD [--create-pr], weekly YYYY-Www [--create-pr], monthly YYYY-MM [--create-pr], or issue NUMBER [--create-pr].",
+  );
 }
 
 function extractDeviceRequestIds(text) {
@@ -987,6 +1017,9 @@ const ALLOWED_CONSOLE_COMMANDS = new Set([
   // Plugin management
   "openclaw.plugins.list",
   "openclaw.plugins.enable",
+
+  // Investment report runner
+  "investment.report.run",
 ]);
 
 app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
@@ -1070,6 +1103,19 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       if (!name) return res.status(400).json({ ok: false, error: "Missing plugin name" });
       if (!/^[A-Za-z0-9_-]+$/.test(name)) return res.status(400).json({ ok: false, error: "Invalid plugin name" });
       const r = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "enable", name]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    if (cmd === "investment.report.run") {
+      let reportArgs;
+      try {
+        reportArgs = parseInvestmentReportConsoleArg(arg);
+      } catch (err) {
+        return res.status(400).json({ ok: false, error: String(err) });
+      }
+      const r = await runCmd("node", ["scripts/run-investment-codex-report.mjs", ...reportArgs], {
+        timeoutMs: 1_200_000,
+      });
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
 

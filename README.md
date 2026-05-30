@@ -44,6 +44,20 @@ YOAKARI Slack routine buttons:
 - Set `YOAKARI_GITHUB_TOKEN` on the Railway service. The token needs permission to dispatch workflows for `shunsuke-chocolate/yoakari-content`.
 - Optional overrides: `YOAKARI_GITHUB_REPO_OWNER`, `YOAKARI_GITHUB_REPO_NAME`, `YOAKARI_GITHUB_BRANCH`, `YOAKARI_ROUTINE_DISPATCH_EVENT`, `YOAKARI_REVIEW_DISPATCH_EVENT`.
 
+Investment Codex report runner:
+- This fork also exposes an allowlisted `/setup` debug-console command: `investment.report.run`.
+- The command syncs `shunsuke-chocolate/investment` into `/data/workspace/investment-report-runner` with `gh`, then runs that repo's `scripts/run_codex_report.sh`.
+- Console argument examples:
+  - `daily 2026-05-30`
+  - `daily 2026-05-30 --create-pr`
+  - `weekly 2026-W22 --create-pr`
+  - `monthly 2026-05 --create-pr`
+  - `issue 53 --create-pr`
+- Required runtime state:
+  - `GH_TOKEN` must have access to `shunsuke-chocolate/investment` contents and pull requests.
+  - `CODEX_HOME=/data/.codex` must contain a valid Codex login.
+  - The runner uses `CODEX_SANDBOX=danger-full-access` by default inside Railway because nested `bubblewrap` namespaces are not available there.
+
 4) Enable **Public Networking** (HTTP). Railway will assign a domain.
    - This service listens on Railway’s injected `PORT` at runtime (recommended).
 5) Deploy.
