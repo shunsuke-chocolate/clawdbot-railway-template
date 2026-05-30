@@ -51,7 +51,11 @@ ENV NODE_ENV=production
 
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    bubblewrap \
     ca-certificates \
+    curl \
+    gh \
+    git \
     tini \
     python3 \
     python3-venv \
@@ -60,9 +64,14 @@ RUN apt-get update \
 # `openclaw update` expects pnpm. Provide it in the runtime image.
 RUN corepack enable && corepack prepare pnpm@10.23.0 --activate
 
+# Install Codex CLI into the image so report automation survives redeploys.
+RUN npm install -g @openai/codex@latest --include=optional \
+  && npm cache clean --force
+
 # Persist user-installed tools by default by targeting the Railway volume.
 # - npm global installs -> /data/npm
 # - pnpm global installs -> /data/pnpm (binaries) + /data/pnpm-store (store)
+ENV CODEX_HOME=/data/.codex
 ENV NPM_CONFIG_PREFIX=/data/npm
 ENV NPM_CONFIG_CACHE=/data/npm-cache
 ENV PNPM_HOME=/data/pnpm
