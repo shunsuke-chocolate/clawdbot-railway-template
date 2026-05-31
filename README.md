@@ -50,9 +50,11 @@ Investment Codex report runner:
 - Console argument examples:
   - `daily 2026-05-30`
   - `daily 2026-05-30 --create-pr`
+  - `daily 2026-05-30 --create-pr --auto-merge`
   - `weekly 2026-W22 --create-pr`
   - `monthly 2026-05 --create-pr`
   - `issue 53 --create-pr`
+- `--auto-merge` implies `--create-pr` and merges only after the investment repo runner has verified that the report output is the only changed file.
 - Required runtime state:
   - `GH_TOKEN` must have access to `shunsuke-chocolate/investment` contents and pull requests.
   - `CODEX_HOME=/data/.codex` must contain a valid Codex login.
