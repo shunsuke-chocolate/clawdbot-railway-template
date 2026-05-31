@@ -964,25 +964,27 @@ function parseInvestmentReportConsoleArg(arg) {
     return ["--help"];
   }
 
-  const createPr = parts.includes("--create-pr");
-  const filtered = parts.filter((part) => part !== "--create-pr");
+  const createPr = parts.includes("--create-pr") || parts.includes("--auto-merge");
+  const autoMerge = parts.includes("--auto-merge");
+  const filtered = parts.filter((part) => part !== "--create-pr" && part !== "--auto-merge");
   const kind = filtered[0];
+  const outputFlags = [...(createPr ? ["--create-pr"] : []), ...(autoMerge ? ["--auto-merge"] : [])];
 
   if (kind === "issue" && /^[0-9]+$/.test(filtered[1] || "") && filtered.length === 2) {
-    return ["--issue", filtered[1], ...(createPr ? ["--create-pr"] : [])];
+    return ["--issue", filtered[1], ...outputFlags];
   }
   if (kind === "daily" && /^\d{4}-\d{2}-\d{2}$/.test(filtered[1] || "") && filtered.length === 2) {
-    return ["--report-type", "daily", "--date", filtered[1], ...(createPr ? ["--create-pr"] : [])];
+    return ["--report-type", "daily", "--date", filtered[1], ...outputFlags];
   }
   if (kind === "weekly" && /^\d{4}-W\d{2}$/.test(filtered[1] || "") && filtered.length === 2) {
-    return ["--report-type", "weekly", "--period", filtered[1], ...(createPr ? ["--create-pr"] : [])];
+    return ["--report-type", "weekly", "--period", filtered[1], ...outputFlags];
   }
   if (kind === "monthly" && /^\d{4}-\d{2}$/.test(filtered[1] || "") && filtered.length === 2) {
-    return ["--report-type", "monthly", "--period", filtered[1], ...(createPr ? ["--create-pr"] : [])];
+    return ["--report-type", "monthly", "--period", filtered[1], ...outputFlags];
   }
 
   throw new Error(
-    "Invalid argument. Use: daily YYYY-MM-DD [--create-pr], weekly YYYY-Www [--create-pr], monthly YYYY-MM [--create-pr], or issue NUMBER [--create-pr].",
+    "Invalid argument. Use: daily YYYY-MM-DD [--create-pr] [--auto-merge], weekly YYYY-Www [--create-pr] [--auto-merge], monthly YYYY-MM [--create-pr] [--auto-merge], or issue NUMBER [--create-pr] [--auto-merge].",
   );
 }
 

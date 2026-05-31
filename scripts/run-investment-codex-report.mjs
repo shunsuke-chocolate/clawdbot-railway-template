@@ -9,10 +9,10 @@ const DEFAULT_BASE_BRANCH = "main";
 
 function usage() {
   return `Usage:
-  node scripts/run-investment-codex-report.mjs --report-type daily --date YYYY-MM-DD [--create-pr]
-  node scripts/run-investment-codex-report.mjs --report-type weekly --period YYYY-Www [--create-pr]
-  node scripts/run-investment-codex-report.mjs --report-type monthly --period YYYY-MM [--create-pr]
-  node scripts/run-investment-codex-report.mjs --issue NUMBER [--create-pr]
+  node scripts/run-investment-codex-report.mjs --report-type daily --date YYYY-MM-DD [--create-pr] [--auto-merge]
+  node scripts/run-investment-codex-report.mjs --report-type weekly --period YYYY-Www [--create-pr] [--auto-merge]
+  node scripts/run-investment-codex-report.mjs --report-type monthly --period YYYY-MM [--create-pr] [--auto-merge]
+  node scripts/run-investment-codex-report.mjs --issue NUMBER [--create-pr] [--auto-merge]
 `;
 }
 
@@ -22,6 +22,7 @@ function parseArgs(argv) {
     repoDir: process.env.INVESTMENT_REPO_DIR || DEFAULT_REPO_DIR,
     baseBranch: process.env.INVESTMENT_BASE_BRANCH || DEFAULT_BASE_BRANCH,
     createPr: false,
+    autoMerge: false,
     reportType: "",
     date: "",
     period: "",
@@ -38,6 +39,10 @@ function parseArgs(argv) {
     else if (key === "--period") args.period = argv[++i] || "";
     else if (key === "--issue") args.issue = argv[++i] || "";
     else if (key === "--create-pr") args.createPr = true;
+    else if (key === "--auto-merge") {
+      args.autoMerge = true;
+      args.createPr = true;
+    }
     else if (key === "--help" || key === "-h") {
       console.log(usage());
       process.exit(0);
@@ -183,6 +188,7 @@ function runnerArgs(args) {
     if (args.period) out.push("--period", args.period);
   }
   if (args.createPr) out.push("--create-pr");
+  if (args.autoMerge) out.push("--auto-merge");
   return out;
 }
 
