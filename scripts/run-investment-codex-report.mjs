@@ -86,14 +86,44 @@ function spawnCapture(cmd, args, opts = {}) {
     encoding: "utf8",
     maxBuffer: opts.maxBuffer || 10 * 1024 * 1024,
   });
-  const output = `${result.stdout || ""}${result.stderr || ""}`;
+  const output = redact(`${result.stdout || ""}${result.stderr || ""}`);
+  const displayArgs = args.map((arg) => redact(arg)).join(" ");
   if (result.error) {
-    throw new Error(`${cmd} ${args.join(" ")} failed to start: ${result.error.message}`);
+    throw new Error(`${cmd} ${displayArgs} failed to start: ${result.error.message}`);
   }
   if ((result.status ?? 0) !== 0 && !opts.allowFailure) {
-    throw new Error(`${cmd} ${args.join(" ")} failed with exit ${result.status}\n${output}`);
+    throw new Error(`${cmd} ${displayArgs} failed with exit ${result.status}\n${output}`);
   }
   return { code: result.status ?? 0, output };
+}
+
+function githubToken() {
+  return process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.YOAKARI_GITHUB_TOKEN || "";
+}
+
+function redact(text) {
+  let out = String(text || "");
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!value || value.length < 8) continue;
+    if (!/(TOKEN|PASSWORD|SECRET|AUTH|KEY)/i.test(key)) continue;
+    out = out.split(value).join("***");
+  }
+  return out;
+}
+
+function gitAuthEnv(baseEnv = process.env) {
+  const token = githubToken();
+  if (!token) return baseEnv;
+  const basicAuth = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+
+  return {
+    ...baseEnv,
+    GH_TOKEN: baseEnv.GH_TOKEN || token,
+    GITHUB_TOKEN: baseEnv.GITHUB_TOKEN || token,
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+    GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basicAuth}`,
+  };
 }
 
 function runLogged(cmd, args, opts = {}) {
@@ -106,7 +136,7 @@ function runLogged(cmd, args, opts = {}) {
     let tail = "";
     const log = fs.createWriteStream(opts.logPath, { flags: "a", encoding: "utf8" });
     const append = (chunk) => {
-      const text = chunk.toString("utf8");
+      const text = redact(chunk.toString("utf8"));
       log.write(text);
       tail = `${tail}${text}`.slice(-30_000);
     };
@@ -125,20 +155,22 @@ function runLogged(cmd, args, opts = {}) {
 
 function ensureRepo(args) {
   fs.mkdirSync(path.dirname(args.repoDir), { recursive: true });
-  spawnCapture("gh", ["auth", "setup-git"], { allowFailure: true });
+  const env = gitAuthEnv();
+  const repoUrl = `https://github.com/${args.repo}.git`;
+  spawnCapture("gh", ["auth", "setup-git"], { allowFailure: true, env });
 
   if (!fs.existsSync(path.join(args.repoDir, ".git"))) {
     if (fs.existsSync(args.repoDir)) {
       throw new Error(`${args.repoDir} exists but is not a git repository.`);
     }
-    spawnCapture("gh", ["repo", "clone", args.repo, args.repoDir], { maxBuffer: 20 * 1024 * 1024 });
+    spawnCapture("git", ["clone", repoUrl, args.repoDir], { env, maxBuffer: 20 * 1024 * 1024 });
   }
 
-  spawnCapture("git", ["-C", args.repoDir, "remote", "set-url", "origin", `https://github.com/${args.repo}.git`]);
-  spawnCapture("git", ["-C", args.repoDir, "fetch", "origin", args.baseBranch], { maxBuffer: 20 * 1024 * 1024 });
-  spawnCapture("git", ["-C", args.repoDir, "switch", args.baseBranch]);
-  spawnCapture("git", ["-C", args.repoDir, "reset", "--hard", `origin/${args.baseBranch}`]);
-  spawnCapture("git", ["-C", args.repoDir, "clean", "-fd", "--", ".report-agent", "reports/insights", "reports/weekly", "reports/monthly"]);
+  spawnCapture("git", ["-C", args.repoDir, "remote", "set-url", "origin", repoUrl], { env });
+  spawnCapture("git", ["-C", args.repoDir, "fetch", "origin", args.baseBranch], { env, maxBuffer: 20 * 1024 * 1024 });
+  spawnCapture("git", ["-C", args.repoDir, "switch", args.baseBranch], { env });
+  spawnCapture("git", ["-C", args.repoDir, "reset", "--hard", `origin/${args.baseBranch}`], { env });
+  spawnCapture("git", ["-C", args.repoDir, "clean", "-fd", "--", ".report-agent", "reports/insights", "reports/weekly", "reports/monthly"], { env });
 }
 
 function runnerArgs(args) {
@@ -162,7 +194,7 @@ fs.mkdirSync(logDir, { recursive: true });
 const logPath = path.join(logDir, `investment-report-run-${Date.now()}.log`);
 
 const env = {
-  ...process.env,
+  ...gitAuthEnv(),
   CODEX_HOME: process.env.CODEX_HOME || "/data/.codex",
   CODEX_CMD: process.env.CODEX_CMD || "codex",
   CODEX_SANDBOX: process.env.CODEX_SANDBOX || "danger-full-access",
